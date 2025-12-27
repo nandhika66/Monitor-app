@@ -1,0 +1,49 @@
+{
+  "name": "monitor-app",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+  "dev": "concurrently \"npm run dev:react\" \"npm run dev:backend\" \"npm run dev:electron\"",
+  "dev:react": "vite",
+  "dev:backend": "node server.js",
+  "dev:electron": "wait-on http://localhost:5173 && electron ."
+},
+  "dependencies": {
+    "@radix-ui/react-switch": "^1.0.3",
+    "active-win": "^8.1.1",
+    "axios": "^1.7.7",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "electron": "^32.1.2",
+    "express": "^4.21.0",
+    "fs-extra": "^11.2.0",
+    "lucide-react": "^0.445.0",
+    "mysql2": "^3.11.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-transition-group": "^4.4.5",
+    "uiohook-napi": "^1.5.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^8.2.2",
+    "electron-builder": "^25.0.5",
+    "electronmon": "^2.0.2",
+    "vite": "^5.4.8",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.monitor.app",
+    "productName": "Monitor App",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js",
+      "server.js"
+    ]
+  }
+}
