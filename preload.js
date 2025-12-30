@@ -5,5 +5,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pauseTracking: () => ipcRenderer.invoke('pauseTracking'),
   resumeTracking: () => ipcRenderer.invoke('resumeTracking'),
   stopTracking: () => ipcRenderer.invoke('stopTracking'),
-  onActivityUpdate: (callback) => ipcRenderer.on('activityUpdate', callback)
+  onActivityUpdate: (callback) => ipcRenderer.on('activityUpdate', (event, data) => callback(event, data))
 });

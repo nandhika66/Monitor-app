@@ -147,18 +147,46 @@ function finalizeAndSendBlock() {
 
   const activeMinutes = currentBlock.minutes.filter(m => m.active).length;
 
+  // Calculate total input (mouse + keyboard) across all 10 minutes
+  let totalInput = 0;
+  currentBlock.minutes.forEach(minute => {
+    totalInput += (minute.mouse || 0) + (minute.keyboard || 0);
+  });
+
+  // Simple activity percentage: 
+  // - Max expected input per 10 min = 1000 (arbitrary threshold, adjust as needed)
+  // - % = (totalInput / max) * 100, capped at 100
+  const maxExpectedInput = 1000; // Tune this based on real usage (e.g., very active user might do 800–1200)
+  const activityPercentage = Math.min(100, Math.round((totalInput / maxExpectedInput) * 100));
+
   const logEntry = {
     projectId: context.projectId,
     taskId: context.taskId,
     timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
     screenshot: currentBlock.screenshot,
     activity_json: JSON.stringify({ minutes: currentBlock.minutes }),
-    active_minutes: activeMinutes
+    active_minutes: activeMinutes,
+    activity_percentage: activityPercentage  // New field
   };
 
+  // Send to backend
   axios.post('http://localhost:3000/activity', logEntry)
-    .then(() => console.log('Block sent to backend'))
-    .catch(err => console.log('Offline mode:', err.message));
+    .then(() => {
+      console.log('Block sent to backend');
+      console.log(`Activity Percentage for this block: ${activityPercentage}%`);
+    })
+    .catch(err => {
+      console.log('Offline - data will sync later:', err.message);
+    });
+
+  // Send live update to UI (including new %)
+  if (win) {
+    win.webContents.send('activityUpdate', {
+      mouse: mouseCount,
+      keyboard: keyboardCount,
+      activityPercentage: activityPercentage
+    });
+  }
 }
 
 // IPC Handlers
