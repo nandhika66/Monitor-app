@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor App — Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body class="app-body">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">📊</div>
+      <div>
+        <div class="sidebar-title">Monitor App</div>
+        <div class="sidebar-subtitle" id="sidebarUser">Loading...</div>
+      </div>
+    </div>
+
+    <ul class="sidebar-nav">
+      <li>
+        <a href="#" class="nav-link active" data-section="overview">
+          <span class="nav-icon">🏠</span> Overview
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-section="projects">
+          <span class="nav-icon">📁</span> Projects &amp; Tasks
+        </a>
+      </li>
+      <li>
+        <a href="#" class="nav-link" data-section="reports">
+          <span class="nav-icon">📈</span> Reports
+        </a>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <button class="btn-logout" onclick="logout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- MAIN -->
+  <main class="main-content">
+
+    <!-- OVERVIEW -->
+    <section id="section-overview" class="section active">
+      <div class="section-header">
+        <div>
+          <h2>Overview</h2>
+          <p>Your activity at a glance</p>
+        </div>
+      </div>
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card"><div class="loading">Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Recent Activity</h3></div>
+        <div id="recentActivity"><div class="loading">Loading...</div></div>
+      </div>
+    </section>
+
+    <!-- PROJECTS -->
+    <section id="section-projects" class="section">
+      <div class="section-header">
+        <div>
+          <h2>Projects &amp; Tasks</h2>
+          <p>Manage projects — reflected instantly in the desktop app</p>
+        </div>
+        <button class="btn btn-primary" onclick="openProjectModal()">+ New Project</button>
+      </div>
+      <div id="projectsList"><div class="loading">Loading...</div></div>
+    </section>
+
+    <!-- REPORTS -->
+    <section id="section-reports" class="section">
+      <div class="section-header">
+        <div>
+          <h2>Activity Reports</h2>
+          <p>Screenshots and tracking data from the desktop app</p>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="card mb-20">
+        <div class="filter-bar">
+          <select id="filterProject" onchange="applyFilters()">
+            <option value="">All Projects</option>
+          </select>
+          <input type="date" id="filterStart" onchange="applyFilters()">
+          <input type="date" id="filterEnd"   onchange="applyFilters()">
+          <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Clear Filters</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Project</th>
+              <th>Task</th>
+              <th>Active Min</th>
+              <th>Activity %</th>
+              <th>Screenshot</th>
+            </tr>
+          </thead>
+          <tbody id="reportsBody">
+            <tr><td colspan="6" class="empty-row">Loading...</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- PROJECT MODAL -->
+  <div class="modal-overlay hidden" id="projectModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="projectModalTitle">New Project</h3>
+        <button class="modal-close" onclick="closeModal('projectModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Project Name</label>
+          <input type="text" id="projectNameInput" placeholder="e.g. Client Website">
+        </div>
+        <div id="projectModalError" class="auth-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('projectModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProject()">Save Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TASK MODAL -->
+  <div class="modal-overlay hidden" id="taskModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="taskModalTitle">New Task</h3>
+        <button class="modal-close" onclick="closeModal('taskModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Task Name</label>
+          <input type="text" id="taskNameInput" placeholder="e.g. Design Homepage">
+        </div>
+        <div class="form-group" id="parentTaskRow">
+          <label>Parent Task <span class="text-muted">(optional)</span></label>
+          <select id="taskParentInput">
+            <option value="">None — Top Level</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Estimated Hours</label>
+          <input type="number" id="taskEstHours" placeholder="0" min="0" step="0.5">
+        </div>
+        <div id="taskModalError" class="auth-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('taskModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveTask()">Save Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREENSHOT MODAL -->
+  <div class="modal-overlay hidden" id="screenshotModal"
+       onclick="closeModal('screenshotModal')">
+    <div class="screenshot-modal-content" onclick="event.stopPropagation()">
+      <button class="screenshot-close" onclick="closeModal('screenshotModal')">✕</button>
+      <img id="screenshotImg" src="" alt="Screenshot">
+      <div class="screenshot-meta" id="screenshotMeta"></div>
+    </div>
+  </div>
+
+  <script src="/dashboard/js/app.js"></script>
+</body>
+</html>

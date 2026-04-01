@@ -1,45 +1,147 @@
-const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
-const path = require('path');
+const {
+  app, BrowserWindow, ipcMain, desktopCapturer,
+  Tray, Menu, nativeImage, Notification
+} = require('electron');
+const path  = require('path');
+const zlib  = require('zlib');
 const { uIOhook } = require('uiohook-napi');
-const activeWin = require('active-win');
-const axios = require('axios');
+const activeWin    = require('active-win');
+const axios        = require('axios');
 
-let win;
-let tracking = false;
-let paused = false;
-let context = { projectId: null, taskId: null };
-let currentBlock = { minutes: [], screenshot: null };
-let mouseCount = 0;
-let keyboardCount = 0;
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let win               = null;
+let tray              = null;
+let tracking          = false;
+let paused            = false;
+let context           = { projectId: null, taskId: null };
+let currentBlock      = { minutes: [], screenshot: null };
+let minuteIndex       = 0;
+let blockInterval     = null;
+let idleCheckInterval = null;
+let idleAutoPaused    = false;
+let lastActivityTime  = Date.now();
+let mouseCount        = 0;
+let keyboardCount     = 0;
 let currentMinuteCount = { mouse: 0, keyboard: 0 };
 
-function createWindow() {
-win = new BrowserWindow({
-  width: 480,
-  height: 420,
-  resizable: false,
-  minimizable: true,
-  maximizable: false,
-  useContentSize: true, // ← Add this: uses exact content size without extra chrome
-  webPreferences: {
-    preload: path.join(__dirname, 'preload.js'),
-    contextIsolation: true,
-    nodeIntegration: false
+const IDLE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+// ─── TRAY ICON GENERATOR (16×16 solid #3b82f6 PNG) ───────────────────────────
+function buildTrayIconBase64() {
+  function crc32(buf) {
+    const t = [];
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+      t[n] = c;
+    }
+    let crc = 0xFFFFFFFF;
+    for (const b of buf) crc = t[(crc ^ b) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
   }
-});
+
+  function chunk(type, data) {
+    const tb  = Buffer.from(type);
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const cd  = Buffer.concat([tb, data]);
+    const cb  = Buffer.alloc(4); cb.writeUInt32BE(crc32(cd));
+    return Buffer.concat([len, tb, data, cb]);
+  }
+
+  const W = 16, H = 16, R = 59, G = 130, B = 246;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(W, 0); ihdr.writeUInt32BE(H, 4);
+  ihdr[8] = 8; ihdr[9] = 2;
+
+  const raw = Buffer.alloc(H * (1 + W * 3));
+  for (let y = 0; y < H; y++) {
+    const o = y * (1 + W * 3);
+    raw[o] = 0;
+    for (let x = 0; x < W; x++) {
+      raw[o + 1 + x*3] = R; raw[o + 2 + x*3] = G; raw[o + 3 + x*3] = B;
+    }
+  }
+
+  const sig = Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]);
+  return Buffer.concat([
+    sig,
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64');
+}
+
+// ─── WINDOW ───────────────────────────────────────────────────────────────────
+function createWindow() {
+  win = new BrowserWindow({
+    width: 480,
+    height: 450,         // slightly taller for idle banner
+    resizable: false,
+    minimizable: true,
+    maximizable: false,
+    useContentSize: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
 
   win.loadURL('http://localhost:5173');
 
-  // Optional: open dev tools for debugging
-  // win.webContents.openDevTools({ mode: 'detach' });
+  // Hide to tray on close instead of quitting
+  win.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      win.hide();
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Monitor App',
+          body: 'Minimized to tray — tracking continues in the background.',
+        }).show();
+      }
+    }
+  });
 }
+
+// ─── TRAY ─────────────────────────────────────────────────────────────────────
+function setupTray() {
+  const icon = nativeImage.createFromDataURL(
+    `data:image/png;base64,${buildTrayIconBase64()}`
+  );
+  tray = new Tray(icon);
+  tray.setToolTip('Monitor App');
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: 'Show Monitor App',
+      click: () => { win.show(); win.focus(); },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: () => { app.isQuitting = true; app.quit(); },
+    },
+  ]);
+
+  tray.setContextMenu(menu);
+  tray.on('click', () => {
+    if (win.isVisible()) { win.hide(); } else { win.show(); win.focus(); }
+  });
+}
+
+// ─── APP READY ────────────────────────────────────────────────────────────────
+app.isQuitting = false;
 
 app.whenReady().then(() => {
   createWindow();
+  setupTray();
 
   uIOhook.start();
 
+  // Keyboard — counts for activity + resets idle timer
   uIOhook.on('keydown', () => {
+    lastActivityTime = Date.now();
     if (tracking && !paused) {
       keyboardCount++;
       currentMinuteCount.keyboard++;
@@ -47,7 +149,9 @@ app.whenReady().then(() => {
     }
   });
 
+  // Click — counts for activity + resets idle timer
   uIOhook.on('click', () => {
+    lastActivityTime = Date.now();
     if (tracking && !paused) {
       mouseCount++;
       currentMinuteCount.mouse++;
@@ -55,90 +159,112 @@ app.whenReady().then(() => {
     }
   });
 
+  // Move — ONLY resets idle timer, never inflates activity score
   uIOhook.on('mousemove', () => {
-    if (tracking && !paused) {
-      mouseCount++;
-      currentMinuteCount.mouse++;
-      sendLiveStats();
-    }
+    lastActivityTime = Date.now();
   });
+
+  // Idle detection — check every 30 seconds
+  idleCheckInterval = setInterval(() => {
+    if (!tracking || paused) return;
+    const idle = Date.now() - lastActivityTime;
+    if (idle >= IDLE_THRESHOLD_MS) {
+      paused        = true;
+      idleAutoPaused = true;
+      if (blockInterval) { clearInterval(blockInterval); blockInterval = null; }
+      if (win) {
+        win.webContents.send('idleAutoPaused', {
+          idleMinutes: Math.floor(idle / 60000),
+        });
+      }
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Tracking Paused',
+          body: `No activity for ${Math.floor(idle / 60000)} min. Open the app to resume.`,
+        }).show();
+      }
+    }
+  }, 30000);
 });
 
+// ─── APP EVENTS ───────────────────────────────────────────────────────────────
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  // Do not quit — we live in the tray
 });
 
 app.on('before-quit', () => {
+  app.isQuitting = true;
   uIOhook.stop();
+  if (blockInterval)     clearInterval(blockInterval);
+  if (idleCheckInterval) clearInterval(idleCheckInterval);
 });
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 function sendLiveStats() {
   if (win && win.webContents) {
-    win.webContents.send('activityUpdate', { mouse: mouseCount, keyboard: keyboardCount });
+    win.webContents.send('activityUpdate', {
+      mouse:    mouseCount,
+      keyboard: keyboardCount,
+    });
   }
 }
 
+// ─── BLOCK MANAGEMENT ─────────────────────────────────────────────────────────
 function startNewBlock() {
-  currentBlock = { minutes: [], screenshot: null };
+  currentBlock       = { minutes: [], screenshot: null };
   currentMinuteCount = { mouse: 0, keyboard: 0 };
-  let minuteIndex = 0;
+  minuteIndex        = 0;
+  runBlockInterval();
+}
 
-  const interval = setInterval(async () => {
+function resumeBlock() {
+  currentMinuteCount = { mouse: 0, keyboard: 0 };
+  runBlockInterval();
+}
+
+function runBlockInterval() {
+  if (blockInterval) { clearInterval(blockInterval); blockInterval = null; }
+
+  blockInterval = setInterval(async () => {
     if (paused || !tracking) {
-      clearInterval(interval);
+      clearInterval(blockInterval); blockInterval = null;
       return;
     }
-
     try {
-      const active = await activeWin();
+      const active   = await activeWin();
       const isActive = !!active;
 
       currentBlock.minutes[minuteIndex] = {
         keyboard: currentMinuteCount.keyboard,
-        mouse: currentMinuteCount.mouse,
-        active: isActive,
-        app: active?.title || null
+        mouse:    currentMinuteCount.mouse,
+        active:   isActive,
+        app:      active?.title || null,
       };
-
       currentMinuteCount = { mouse: 0, keyboard: 0 };
 
-      // Random screenshot in the 10-minute block
       if (minuteIndex === Math.floor(Math.random() * 10)) {
         try {
           const sources = await desktopCapturer.getSources({
             types: ['screen'],
-            thumbnailSize: { width: 1920, height: 1080 }
+            thumbnailSize: { width: 1920, height: 1080 },
           });
-
-          console.log('Available screen sources:', sources.length);
-
           if (sources.length > 0) {
-            const source = sources.find(s => s.thumbnail && !s.thumbnail.isEmpty()) || sources[0];
-
-            if (source && source.thumbnail && !source.thumbnail.isEmpty()) {
-              currentBlock.screenshot = `data:image/png;base64,${source.thumbnail.toPNG().toString('base64')}`;
-              console.log('Screenshot captured successfully! Length:', currentBlock.screenshot.length);
-            } else {
-              console.log('No valid thumbnail found in sources');
+            const src = sources.find(s => s.thumbnail && !s.thumbnail.isEmpty()) || sources[0];
+            if (src?.thumbnail && !src.thumbnail.isEmpty()) {
+              currentBlock.screenshot =
+                `data:image/png;base64,${src.thumbnail.toPNG().toString('base64')}`;
             }
-          } else {
-            console.log('No screen sources available');
           }
-        } catch (err) {
-          console.error('Screenshot capture failed:', err.message);
-        }
+        } catch (e) { console.error('Screenshot failed:', e.message); }
       }
 
       minuteIndex++;
-
       if (minuteIndex >= 10) {
-        clearInterval(interval);
+        clearInterval(blockInterval); blockInterval = null;
         finalizeAndSendBlock();
         if (tracking && !paused) startNewBlock();
       }
-    } catch (err) {
-      console.error('Interval error:', err);
-    }
+    } catch (e) { console.error('Interval error:', e); }
   }, 60000);
 }
 
@@ -146,79 +272,82 @@ function finalizeAndSendBlock() {
   if (currentBlock.minutes.length === 0) return;
 
   const activeMinutes = currentBlock.minutes.filter(m => m.active).length;
-
-  // Calculate total input (mouse + keyboard) across all 10 minutes
   let totalInput = 0;
-  currentBlock.minutes.forEach(minute => {
-    totalInput += (minute.mouse || 0) + (minute.keyboard || 0);
-  });
-
-  // Simple activity percentage: 
-  // - Max expected input per 10 min = 1000 (arbitrary threshold, adjust as needed)
-  // - % = (totalInput / max) * 100, capped at 100
-  const maxExpectedInput = 1000; // Tune this based on real usage (e.g., very active user might do 800–1200)
-  const activityPercentage = Math.min(100, Math.round((totalInput / maxExpectedInput) * 100));
+  currentBlock.minutes.forEach(m => { totalInput += (m.mouse||0) + (m.keyboard||0); });
+  const activityPercentage = Math.min(100, Math.round((totalInput / 1000) * 100));
 
   const logEntry = {
-    projectId: context.projectId,
-    taskId: context.taskId,
-    timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
-    screenshot: currentBlock.screenshot,
-    activity_json: JSON.stringify({ minutes: currentBlock.minutes }),
-    active_minutes: activeMinutes,
-    activity_percentage: activityPercentage  // New field
+    projectId:           context.projectId,
+    taskId:              context.taskId,
+    timestamp:           new Date().toISOString().slice(0,19).replace('T',' '),
+    screenshot:          currentBlock.screenshot,
+    activity_json:       JSON.stringify({ minutes: currentBlock.minutes }),
+    active_minutes:      activeMinutes,
+    activity_percentage: activityPercentage,
   };
 
-  // Send to backend
   axios.post('http://localhost:3000/activity', logEntry)
-    .then(() => {
-      console.log('Block sent to backend');
-      console.log(`Activity Percentage for this block: ${activityPercentage}%`);
-    })
-    .catch(err => {
-      console.log('Offline - data will sync later:', err.message);
-    });
+    .then(() => console.log(`Block saved. Activity: ${activityPercentage}%`))
+    .catch(e  => console.log('Offline:', e.message));
 
-  // Send live update to UI (including new %)
   if (win) {
     win.webContents.send('activityUpdate', {
-      mouse: mouseCount,
-      keyboard: keyboardCount,
-      activityPercentage: activityPercentage
+      mouse:               mouseCount,
+      keyboard:            keyboardCount,
+      activityPercentage,
     });
   }
 }
 
-// IPC Handlers
+// ─── IPC HANDLERS ─────────────────────────────────────────────────────────────
 ipcMain.handle('startTracking', (event, ctx) => {
-  context = ctx;
-  tracking = true;
-  paused = false;
-  mouseCount = 0;
-  keyboardCount = 0;
+  context        = ctx;
+  tracking       = true;
+  paused         = false;
+  idleAutoPaused = false;
+  mouseCount     = 0;
+  keyboardCount  = 0;
+  lastActivityTime = Date.now();
   sendLiveStats();
   startNewBlock();
 });
 
 ipcMain.handle('pauseTracking', () => {
-  paused = true;
+  paused         = true;
+  idleAutoPaused = false;
 });
 
 ipcMain.handle('resumeTracking', () => {
-  paused = false;
-  startNewBlock();
+  paused           = false;
+  idleAutoPaused   = false;
+  lastActivityTime = Date.now();
+  resumeBlock();
 });
 
 ipcMain.handle('stopTracking', () => {
-  tracking = false;
-  paused = false;
-  
-  // Always try to send the current (partial) block if something was captured
+  tracking       = false;
+  paused         = false;
+  idleAutoPaused = false;
+  if (blockInterval) { clearInterval(blockInterval); blockInterval = null; }
   if (currentBlock.minutes.length > 0 || currentBlock.screenshot) {
     finalizeAndSendBlock();
   }
-  
-  mouseCount = 0;
+  mouseCount    = 0;
   keyboardCount = 0;
   sendLiveStats();
+});
+
+ipcMain.handle('toggleAlwaysOnTop', () => {
+  const next = !win.isAlwaysOnTop();
+  win.setAlwaysOnTop(next);
+  return next;
+});
+
+ipcMain.handle('notifyExceeded', (event, { taskName }) => {
+  if (Notification.isSupported()) {
+    new Notification({
+      title: '⏰ Estimate Exceeded',
+      body:  `You've passed the time estimate for "${taskName}".`,
+    }).show();
+  }
 });

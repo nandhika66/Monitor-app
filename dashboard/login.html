@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitor App — Login</title>
+  <link rel="stylesheet" href="/dashboard/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">📊</div>
+      <h1>Monitor App</h1>
+      <p>Admin Dashboard</p>
+    </div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="loginTab" onclick="showTab('login')">Sign In</button>
+      <button class="auth-tab" id="registerTab" onclick="showTab('register')">Register</button>
+    </div>
+
+    <!-- Login -->
+    <form id="loginForm" class="auth-form" onsubmit="handleLogin(event)">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com" required>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="••••••••" required>
+      </div>
+      <div id="loginError" class="auth-error hidden"></div>
+      <button type="submit" class="btn btn-primary btn-full" id="loginBtn">Sign In</button>
+    </form>
+
+    <!-- Register -->
+    <form id="registerForm" class="auth-form hidden" onsubmit="handleRegister(event)">
+      <div class="form-group">
+        <label>Full Name</label>
+        <input type="text" id="registerName" placeholder="John Doe" required>
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="registerEmail" placeholder="you@example.com" required>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="registerPassword" placeholder="Min. 6 characters" required>
+      </div>
+      <div id="registerError" class="auth-error hidden"></div>
+      <button type="submit" class="btn btn-primary btn-full" id="registerBtn">Create Account</button>
+    </form>
+  </div>
+
+  <script src="/dashboard/js/login.js"></script>
+</body>
+</html>
